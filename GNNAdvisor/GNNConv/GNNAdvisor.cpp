@@ -108,6 +108,11 @@ std::vector<torch::Tensor> spmm_forward(
     int dimWorker, 
     int warpPerBlock) 
 {
+  /*
+          X_prime = GNNA.forward(X, weight, inputInfo.row_pointers, inputInfo.column_index, 
+                                inputInfo.degrees, inputInfo.partPtr, inputInfo.part2Node, \
+                                inputInfo.partSize, inputInfo.dimWorker, inputInfo.warpPerBlock)[0]
+  */
   CHECK_INPUT(input);
   CHECK_INPUT(weight);
   CHECK_INPUT(row_pointers);

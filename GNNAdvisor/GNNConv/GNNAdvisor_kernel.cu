@@ -277,8 +277,12 @@ std::vector<torch::Tensor> spmm_forward_cuda(
     int warpPerBlock
 ) 
 {
+    // update the node representation, i.e., update phase
     auto tmp = torch::mm(input, weight);
     // auto output = torch::zeros_like(tmp);
+    // tmp = input * weight;
+    // 维度等同于(batch_size, input_dim) * (input_dim, output_dim) = (batch_size, output_dim)
+    // output 的维度就是 (batch_size, output_dim)
     auto output = torch::zeros({input.size(0), weight.size(1)}, torch::kCUDA);
     const int dim = output.size(1);
     const int num_nodes = output.size(0);
@@ -286,6 +290,7 @@ std::vector<torch::Tensor> spmm_forward_cuda(
 
     const int block = warpPerBlock * WARP_SIZE;
     const int grid = (num_parts * WARP_SIZE + block  - 1) / block; 
+    // partSize : the number of neighbors in each partition,ngs
     int shared_memory = partSize*warpPerBlock*sizeof(int)+warpPerBlock*dim*sizeof(float);
 
     // printf("grid: %d, block: %d\n", grid, block);
@@ -497,12 +502,13 @@ __global__ void spmm_backward_cuda_kernel(
     int block_warpId = threadIdx.x / WARP_SIZE;
     int laneid = threadIdx.x % WARP_SIZE;
 
+    // 共享内存
     extern __shared__ int part_meta[];                                      // part information.
     int *partial_ids = part_meta;                                           // caching ids
     float *partial_results = (float*)&part_meta[partSize*warpPerBlock];     // caching partial results.
 
     if (warpId < num_parts){
-
+        // 
         const int srcId = part2Node[warpId];
         const int partBeg = part_pointers[warpId];
         const int partEnd = part_pointers[warpId + 1];
@@ -510,6 +516,7 @@ __global__ void spmm_backward_cuda_kernel(
 
         const int pindex_base = block_warpId * partSize;
         #pragma unroll
+        // 缓存邻居id
         for (int nid = partBeg + laneid; nid < partEnd; nid += WARP_SIZE){
             partial_ids[pindex_base + nid - partBeg] = column_index[nid];
         }
@@ -521,12 +528,13 @@ __global__ void spmm_backward_cuda_kernel(
         // }
 
         __syncwarp();
-
+        // 邻居聚合
         const int presult_base = block_warpId * dim;
         for (int nIdx = 0; nIdx < partEnd - partBeg; nIdx++)
         {
             int nid = partial_ids[pindex_base + nIdx];
             // int nid = partial_ids[nIdx];
+            // Compute as a single operation, in round-to-nearest-even mode.
             float degree_norm =  __fmaf_rn(src_norm, degrees[nid], 0);
 
             if (nIdx == 0)
@@ -539,6 +547,7 @@ __global__ void spmm_backward_cuda_kernel(
             if (laneid < dimWorker)
             #pragma unroll
             for (int d = laneid; d < dim; d += dimWorker){
+
                 partial_results[presult_base + d] += __fmaf_rn(degree_norm, d_output[nid][d], 0);
             }
         }
